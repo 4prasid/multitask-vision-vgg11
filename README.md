@@ -1,295 +1,280 @@
-# DA6401 Assignment 2 - Building a Complete Visual Perception Pipeline
+# VGG11 Multi-Task Vision Pipeline
 
-**Student:** Prasid | **Roll No:** PH21B007
+A from-scratch **VGG11** pipeline in PyTorch which, in a single forward pass, predicts a pet's **breed** (37 classes), its **head bounding box**, and a pixel-wise **trimap segmentation**. Built on the Oxford-IIIT Pet dataset with a custom dropout layer, a custom IoU loss, and a U-Net decoder that upsamples with transposed convolutions.
 
-🔗 [W&B Report](https://api.wandb.ai/links/prasid-indian-institute-of-technology-madras/u2yoef01) &nbsp;|&nbsp; 🔗 [GitHub Repository](https://github.com/Prasid7/da6401_assignment_2_ph21b007_prasid)
-
----
-
-## Overview
-
-This project implements a complete **multi-task visual perception pipeline** built on the [Oxford-IIIT Pet Dataset](https://www.robots.ox.ac.uk/~vgg/data/pets/). Starting from a VGG11 encoder built from scratch, the pipeline is progressively extended to handle three vision tasks simultaneously:
-
-1. **Classification** - Predict the pet breed (37 classes)
-2. **Localization** - Predict the head bounding box `[x_center, y_center, width, height]`
-3. **Segmentation** - Produce a pixel-wise trimap mask (foreground / background / border)
-
-All tasks share the same VGG11 convolutional backbone and are unified into a single `MultiTaskPerceptionModel` that processes all three outputs in one forward pass.
+🔗 [W&B Report](https://forge.coreweave.com/wandb/prasid-indian-institute-of-technology-madras/assignment_1/reports/DA6401-Assignment-1-PH21B007-PRASID--VmlldzoxNjEyODA5Ng?accessToken=7lf6abidol3880zy7aiflc38domgwf0gtrwlsqz0fhboc9dumm1bdqjfn0fs1042) &nbsp;|&nbsp; 🔗 [GitHub Repo](https://github.com/4prasid/multitask-vision-vgg11)
 
 ---
 
-## Repository Structure
+Pipeline output on an unseen image
+
+<img width="257" height="277" alt="image" src="https://github.com/user-attachments/assets/4045216d-a9af-4b02-a42f-621effa09c66" />
+<img width="251" height="266" alt="image" src="https://github.com/user-attachments/assets/908f5f09-0173-4b2d-8aad-dde329cff009" />
+
+
+---
+
+
+## Repository structure
 
 ```
-Assignment_2/
+.
 ├── data/
-│   └── pets_dataset.py          # Oxford-IIIT Pet multi-task dataset loader
+│   └── pets_dataset.py        # Oxford-IIIT Pet loader -> (image, label, bbox, mask)
 ├── losses/
-│   ├── __init__.py
-│   └── iou_loss.py              # Custom IoU loss (nn.Module)
+│   └── iou_loss.py            # Custom IoU loss (nn.Module)
 ├── models/
-│   ├── __init__.py
-│   ├── vgg11.py                 # VGG11 encoder with skip-connection support
-│   ├── layers.py                # Custom Dropout layer (nn.Module)
-│   ├── classification.py        # VGG11Classifier (encoder + FC head)
-│   ├── localization.py          # VGG11Localizer (encoder + regression head)
-│   ├── segmentation.py          # VGG11UNet (encoder + U-Net decoder)
-│   └── multitask.py             # MultiTaskPerceptionModel (unified pipeline)
-├── checkpoints/                 # Saved model weights (generated during training)
-├── train.py                     # Training entry point
-├── inference.py                 # Inference and evaluation entry point
+│   ├── vgg11.py               # VGG11 encoder (BatchNorm, skip-feature output)
+│   ├── layers.py              # CustomDropout (inverted dropout, nn.Module)
+│   ├── classification.py      # VGG11Classifier
+│   ├── localization.py        # VGG11Localizer
+│   ├── segmentation.py        # VGG11UNet
+│   └── multitask.py           # MultiTaskPerceptionModel (unified)
+├── class_train.py             # Stage 1: classification
+├── loc_train.py               # Stage 2: localization
+├── seg_train.py               # Stage 3: segmentation
+├── train.py                   # Stage 4: unified multi-task training
+├── evaluate.py                # Metrics for the unified model on the validation split
 ├── requirements.txt
-└── README.md
+├── FINDINGS.md                # Full written analysis of the experiments
+└── LICENSE
 ```
-
----
-
-## Dataset
-
-**Oxford-IIIT Pet Dataset** : [Download here](https://www.robots.ox.ac.uk/~vgg/data/pets/)
-
-The dataset provides:
-- **Images** - JPEG photographs of 37 pet breeds
-- **Class labels** - Breed index (1–37)
-- **Bounding boxes** - XML annotations marking the head region
-- **Trimaps** - Pixel-level masks with 3 classes: `1 = foreground`, `2 = background`, `3 = border`
-
-### Expected Directory Layout
-
-After downloading and extracting, the dataset should be organized as:
-
-```
-<root_dir>/
-├── images/
-│   ├── Abyssinian_1.jpg
-│   └── ...
-└── annotations/
-    ├── list.txt            # trainval split
-    ├── test.txt            # test split
-    ├── trimaps/
-    │   ├── Abyssinian_1.png
-    │   └── ...
-    └── xmls/
-        ├── Abyssinian_1.xml
-        └── ...
-```
-
-> **Note:** Only images that have a corresponding XML bounding-box annotation are included. Samples missing an XML file are automatically excluded by the dataset loader.
 
 ---
 
 ## Architecture
 
-### VGG11 Encoder (`models/vgg11.py`)
+### VGG11 encoder (`models/vgg11.py`)
 
-The backbone follows the standard VGG11 topology with **Batch Normalization** added after every convolutional layer. All five convolutional blocks use `3×3` filters with `padding=1` to preserve spatial dimensions before each `2×2` max-pool.
+Standard VGG11 topology (8 convolutions in 5 blocks) with **BatchNorm after every convolution**. All convolutions are 3×3 with padding 1 and `bias=False` (BatchNorm makes the bias redundant). Each block ends in a 2×2 max-pool.
 
-| Block | Filters | Output Shape (224×224 input) |
-|---|---|---|
-| Block 1 | 64 | `(B, 64, 112, 112)` after pool |
-| Block 2 | 128 | `(B, 128, 56, 56)` after pool |
-| Block 3 | 256 × 2 | `(B, 256, 28, 28)` after pool |
-| Block 4 | 512 × 2 | `(B, 512, 14, 14)` after pool |
-| Block 5 | 512 × 2 | `(B, 512, 7, 7)` after pool |
-
-The encoder's `forward()` method accepts a `return_features` flag. When `True`, it returns both the bottleneck tensor and a dictionary of pre-pool feature maps (`block1` through `block5`) used as skip connections by the U-Net decoder.
-
-**Design Choices:**
-- `bias=False` on all `Conv2d` layers — Batch Normalization makes the bias redundant, saving parameters.
-- BatchNorm placed immediately after `Conv2d` and before `ReLU` — normalizes activations before the non-linearity to stabilize gradients and allow higher stable learning rates.
-
----
-
-### Custom Dropout (`models/layers.py`)
-
-```python
-class CustomDropout(nn.Module):
-```
-
-A fully custom inverted-dropout implementation **without** using `torch.nn.Dropout`:
-
-- During training: draws a Bernoulli mask with keep-probability `(1-p)`, applies it element-wise, and scales the output by `1/(1-p)` so that the expected activation magnitude is preserved at test time.
-- During evaluation (`self.training == False`): passes the input through unchanged.
-- Raises `ValueError` if `p` is outside `[0, 1)` — `p=1.0` is disallowed to prevent division by zero in the scaling step.
-
----
-
-### Task 1 - Classification (`models/classification.py`)
-
-```
-VGG11Encoder → Flatten → FC(25088→4096) + ReLU + Dropout
-                       → FC(4096→4096)  + ReLU + Dropout
-                       → FC(4096→37)    [logits]
-```
-
-`CustomDropout` is placed after each of the first two fully-connected layers. This targets the densest part of the network where overfitting is most likely, while leaving the convolutional feature extractor intact.
-
-**Key parameters:** `num_classes=37`, `dropout_p=0.5`
-
----
-
-### Task 2 - Localization (`models/localization.py`)
-
-```
-VGG11Encoder → AdaptiveAvgPool(7×7) → Flatten
-             → FC(25088→1024) + ReLU + Dropout
-             → FC(1024→512)   + ReLU + Dropout
-             → FC(512→4)      + Sigmoid
-             → [x_center, y_center, width, height]
-```
-
-- The `Sigmoid` output keeps predicted coordinates in `[0, 1]` (normalized).
-- Coordinates are clamped to `[ε, 1-ε]` to avoid degenerate boxes with zero area.
-- The forward method converts to absolute pixel coordinates by multiplying against the input image's `H` and `W`.
-- **Encoder strategy** (frozen vs fine-tuned): controlled externally in `train.py` via `requires_grad` flags on `model.encoder` — not hardcoded in the model class.
-
-**Loss:** Custom `IoULoss` (see below). `dropout_p=0.3` (lighter regularization than classification since the regression head is shallower).
-
----
-
-### Custom IoU Loss (`losses/iou_loss.py`)
-
-```python
-class IoULoss(nn.Module):
-```
-
-Mathematically correct IoU loss for bounding box regression:
-
-1. Converts input `[x_c, y_c, w, h]` → `[x_min, y_min, x_max, y_max]`
-2. Computes intersection area using clamped width/height (`min=0`) to handle non-overlapping boxes gracefully
-3. Computes union area as `pred_area + target_area - inter_area`, clamped to `ε` to prevent division by zero
-4. Returns `loss = 1 - IoU`
-
-Supports `reduction` modes: `"mean"` (default), `"sum"`, or `"none"`. Gradient flow is preserved through all operations.
-
----
-
-### Task 3 - Segmentation (`models/segmentation.py`)
-
-A **U-Net style** network using the VGG11 encoder as the contracting path and a symmetric decoder as the expansive path.
-
-**Decoder (expansive path):**
-
-| Decoder Block | Input | Transposed Conv | After skip concat | Output |
+| Block | Convs | Channels | Pre-pool (skip) map | After pool |
 |---|---|---|---|---|
-| Block 5 | `(B, 512, 7, 7)` | `up5` → `(B, 512, 14, 14)` | concat `block5` → `(B, 1024, 14, 14)` | `(B, 512, 14, 14)` |
-| Block 4 | `(B, 512, 14, 14)` | `up4` → `(B, 512, 28, 28)` | concat `block4` → `(B, 1024, 28, 28)` | `(B, 512, 28, 28)` |
-| Block 3 | `(B, 512, 28, 28)` | `up3` → `(B, 256, 56, 56)` | concat `block3` → `(B, 512, 56, 56)` | `(B, 256, 56, 56)` |
-| Block 2 | `(B, 256, 56, 56)` | `up2` → `(B, 128, 112, 112)` | concat `block2` → `(B, 256, 112, 112)` | `(B, 128, 112, 112)` |
-| Block 1 | `(B, 128, 112, 112)` | `up1` → `(B, 64, 224, 224)` | concat `block1` → `(B, 128, 224, 224)` | `(B, 64, 224, 224)` |
-| Final | `(B, 64, 224, 224)` | `Conv2d(64, 3, 1×1)` | — | `(B, 3, H, W)` |
+| 1 | 1 | 64 | 64 × 224 × 224 | 64 × 112 × 112 |
+| 2 | 1 | 128 | 128 × 112 × 112 | 128 × 56 × 56 |
+| 3 | 2 | 256 | 256 × 56 × 56 | 256 × 28 × 28 |
+| 4 | 2 | 512 | 512 × 28 × 28 | 512 × 14 × 14 |
+| 5 | 2 | 512 | 512 × 14 × 14 | 512 × 7 × 7 |
 
-- **Upsampling:** All upsampling is done with `ConvTranspose2d` (learnable, `kernel_size=2, stride=2`). No bilinear interpolation is used for the primary upsampling steps.
-- **Skip connections:** Pre-pool feature maps from each encoder block are concatenated channel-wise with the decoder's upsampled output at the matching spatial resolution.
-- **Dropout** is applied only in the deeper decoder blocks (5 and 4) where feature maps are densest. Shallower blocks closer to the output are left without dropout to preserve fine spatial detail.
-- **Loss:** Cross-Entropy Loss over 3 classes (`background=0`, `foreground=1`, `border=2`). Cross-entropy is well-suited to multi-class pixel classification and naturally handles class imbalance better than pixel-accuracy-based objectives alone.
-- Weights initialized with `kaiming_normal_` (He initialization) for convolutional layers.
+`forward(x, return_features=True)` returns the bottleneck and a dict of the pre-pool maps (`block1`…`block5`), which the U-Net uses as skip connections. Layer order is **Conv → BatchNorm → ReLU**, so the normalization acts on pre-activations.
 
----
+### Custom dropout (`models/layers.py`)
 
-### Task 4 - Unified Multi-Task Pipeline (`models/multitask.py`)
+`CustomDropout(nn.Module)` is an inverted-dropout layer that does **not** use `torch.nn.Dropout` or `F.dropout`.
+- In training it draws a Bernoulli keep-mask with probability `1 - p` and rescales the kept activations by `1 / (1 - p)`.
+- In eval (`self.training == False`) it is an identity.
+- It raises `ValueError` for `p` outside `[0, 1)`.
+
+### Classification head (`models/classification.py`)
+
+```
+encoder → flatten (512·7·7 = 25088) → FC 4096 → ReLU → CustomDropout
+                                    → FC 4096 → ReLU → CustomDropout
+                                    → FC 37
+```
+
+### Localization head (`models/localization.py`)
+
+```
+encoder → AdaptiveAvgPool(7×7) → flatten → FC 1024 → ReLU → CustomDropout
+                                         → FC 512  → ReLU → CustomDropout
+                                         → FC 4 → Sigmoid → [x_c, y_c, w, h] in [0, 1]
+```
+
+Outputs are normalized, clamped to `[1e-6, 1 - 1e-6]`, and scaled by image width/height to pixels in the unified model.
+
+**Custom IoU loss** (`losses/iou_loss.py`): converts `[x_c, y_c, w, h]` to corners, computes the intersection with clamped width/height (so disjoint boxes give 0), the union with an epsilon floor, and returns `1 - IoU`. It supports `mean`, `sum` and `none` reductions, and gradients flow through every step.
+
+### Segmentation: U-Net decoder (`models/segmentation.py`)
+
+Contracting path = the VGG11 encoder. The expansive path mirrors it, and **all upsampling uses `ConvTranspose2d` (kernel 2, stride 2)**. At every stage the upsampled map is concatenated with the matching encoder map before two Conv-BN-ReLU layers.
+
+| Stage | Input | Transposed conv | Concat with | Output |
+|---|---|---|---|---|
+| 5 | 512 × 7 × 7 | → 512 × 14 × 14 | block 5 → 1024 ch | 512 × 14 × 14 |
+| 4 | 512 × 14 × 14 | → 512 × 28 × 28 | block 4 → 1024 ch | 512 × 28 × 28 |
+| 3 | 512 × 28 × 28 | → 256 × 56 × 56 | block 3 → 512 ch | 256 × 56 × 56 |
+| 2 | 256 × 56 × 56 | → 128 × 112 × 112 | block 2 → 256 ch | 128 × 112 × 112 |
+| 1 | 128 × 112 × 112 | → 64 × 224 × 224 | block 1 → 128 ch | 64 × 224 × 224 |
+| out | 64 × 224 × 224 | 1×1 conv | | 3 × 224 × 224 |
+
+Custom dropout is applied in decoder stages 5 and 4 only, to keep fine spatial detail near the output. Convolutions use He (Kaiming) initialization.
+
+### Unified model (`models/multitask.py`)
 
 ```python
-class MultiTaskPerceptionModel(nn.Module):
+out = model(x)
+out["classification"]   # [B, 37]            breed logits
+out["localization"]     # [B, 4]             (x_c, y_c, w, h) in pixels
+out["segmentation"]     # [B, 3, H, W]       logits; 0 = pet, 1 = background, 2 = border
 ```
 
-The unified model hosts **three independent VGG11 encoders**, each loaded from its own pre-trained single-task checkpoint:
-
-| Encoder | Source Checkpoint | Paired Head |
-|---|---|---|
-| `self.encoder` | `classifier.pth` | Classification FC layers |
-| `self.loc_encoder` | `localizer.pth` | Localization FC layers |
-| `self.seg_encoder` | `segmenter.pth` | U-Net decoder |
-
-A single `forward(x)` call runs all three branches in parallel and returns a dictionary:
-
-```python
-{
-    'classification': torch.Tensor,   # [B, 37]   breed logits
-    'localization':   torch.Tensor,   # [B, 4]    bbox in pixel space
-    'segmentation':   torch.Tensor,   # [B, 3, H, W] trimap logits
-}
-```
-
-**Weight loading** (`_load_weights`): Remaps key prefixes from each single-task state dict (e.g., `encoder.*`, `fc1.*`) to the unified model's namespaced attributes. Uses `strict=False` to allow partial loading — existing weights not found in the checkpoint are silently retained. Pre-trained checkpoints are automatically downloaded via `gdown` if missing or incomplete.
+Weights are loaded from the three single-task checkpoints by remapping state-dict key prefixes (`classifier.pth` → `encoder` + `cls_fc*`, `localizer.pth` → `loc_encoder` + `localizer_fc*`, `segmenter.pth` → `seg_encoder` + decoder). If the checkpoint files are missing, they are downloaded with `gdown`.
 
 ---
 
-## Dataset Loader (`data/pets_dataset.py`)
+## Dataset
 
-`OxfordIIITPetDataset` supports two splits: `'trainval'` and `'test'`.
-
-Each item returns a 4-tuple:
-- `image`: `FloatTensor [3, H, W]`
-- `label`: `LongTensor []` — zero-indexed class (0–36)
-- `bbox`: `FloatTensor [4]` — `[x_center, y_center, width, height]` in unnormalized pixel coordinates
-- `mask`: `LongTensor [H, W]` — values `0` (background), `1` (foreground), `2` (border)
-
-Masks are remapped from the raw trimap values `{1, 2, 3}` → `{0, 1, 2}`.
-
-The loader is fully compatible with [Albumentations](https://albumentations.ai/) transforms via the `transform` argument, which must handle `image`, `mask`, and `bboxes` keys simultaneously.
-
----
-
-## Training
+[Oxford-IIIT Pet](https://www.robots.ox.ac.uk/~vgg/data/pets/): 37 breeds (25 dog, 12 cat), with breed labels, head bounding boxes (XML), and trimaps.
 
 ```bash
-python train.py
+mkdir -p data && cd data
+wget https://www.robots.ox.ac.uk/~vgg/data/pets/data/images.tar.gz
+wget https://www.robots.ox.ac.uk/~vgg/data/pets/data/annotations.tar.gz
+tar -xzf images.tar.gz && tar -xzf annotations.tar.gz
 ```
 
-Edit `train.py` to configure:
-- Dataset root path
-- Task to train (`classification`, `localization`, `segmentation`)
-- Encoder freezing strategy (freeze/unfreeze `model.encoder` parameters)
-- Optimizer, scheduler, number of epochs
-- W&B project and run name
+Expected layout (the dataset is extracted into `data/`, next to `pets_dataset.py`):
 
----
-
-## Inference
-
-```bash
-python inference.py
+```
+data/
+├── images/*.jpg
+└── annotations/
+    ├── list.txt
+    ├── trimaps/*.png
+    └── xmls/*.xml
 ```
 
-Edit `inference.py` to specify the checkpoint path and the path to input images.
+`OxfordIIITPetDataset` reads `annotations/list.txt` and keeps only images that have an XML box annotation (≈3.7k images). Each item is `(image, label, bbox, mask)`:
 
----
-
-## Experiment Tracking
-
-All training runs are logged to [Weights & Biases](https://wandb.ai/). The public W&B report documents:
-
-- Activation distributions with/without Batch Normalization
-- Training vs. validation loss curves under three dropout settings (`p=0`, `0.2`, `0.5`)
-- Transfer learning comparison: frozen backbone vs. partial fine-tuning vs. full fine-tuning
-- Feature map visualizations from the first and last convolutional layers
-- Bounding box prediction overlays with IoU scores on test images
-- Segmentation outputs: original image, ground-truth trimap, predicted trimap
-- Final pipeline results on novel "in-the-wild" pet images
-
-🔗 [View the full W&B Report](https://api.wandb.ai/links/prasid-indian-institute-of-technology-madras/u2yoef01)
-
----
-
-## Evaluation Metrics
-
-| Task | Metric |
+| Item | Format |
 |---|---|
-| Classification | Macro F1-Score (37 classes) |
-| Localization | Mean Average Precision (mAP) |
-| Segmentation | Dice Similarity Coefficient |
+| `image` | float tensor `[3, H, W]` (after transforms: 224×224, ImageNet-normalized) |
+| `label` | long, breed index 0–36 |
+| `bbox` | float `[x_min, y_min, w, h]` (COCO format, pixels) |
+| `mask` | long `[H, W]`: **0 = pet, 1 = background, 2 = border** (raw trimap values 1/2/3 minus 1) |
+
+Albumentations transforms are supported through the `transform` argument and must handle `image`, `mask` and `bboxes` together. All scripts use an 80/20 random split with seed 42.
 
 ---
 
-## Key Design Decisions
+## Setup & usage
 
-**BatchNorm before ReLU:** Normalizing pre-activations stabilizes training, acts as an implicit regularizer, and allows the use of larger learning rates without divergence.
+```bash
+git clone https://github.com/4prasid/multitask-vision-vgg11.git
+cd multitask-vision-vgg11
+pip install -r requirements.txt
+mkdir -p checkpoints
+wandb login                      # training scripts log to Weights & Biases
+```
 
-**Custom Dropout placement:** Applied after FC layers in classification/localization heads (where overfitting is concentrated) and in the two deepest decoder blocks in the U-Net. Shallower layers and the convolutional backbone are left undropped to preserve spatial features and gradient signal quality.
+Train the stages in order (each later stage loads the earlier checkpoints from `checkpoints/`):
 
-**IoU Loss for localization:** Unlike MSE, IoU loss is scale-invariant and directly optimizes the detection metric, making it more robust to variation in box sizes across the dataset.
+```bash
+python class_train.py            # -> checkpoints/classifier.pth
+python loc_train.py              # -> checkpoints/localizer.pth
+python seg_train.py              # -> checkpoints/segmenter.pth
+python train.py                  # -> checkpoints/multitask_best.pth, multitask_last.pth
+python evaluate.py --weights checkpoints/multitask_best.pth
+```
 
-**Transposed Convolutions for upsampling:** Learnable upsampling allows the decoder to learn task-specific upsampling kernels rather than relying on fixed interpolation, giving the network more expressive power in the expansive path.
+Hyperparameters are constants at the top of each script; only `evaluate.py` takes command-line arguments.
 
-**Separate encoders in MultiTaskModel:** Rather than a hard-shared backbone (which can suffer from gradient interference between tasks), each task's encoder is initialized from its own specialized checkpoint. This avoids task competition while still enabling a single unified inference forward pass.
+Inference with a trained model:
+
+```python
+import torch
+from models.multitask import MultiTaskPerceptionModel
+
+model = MultiTaskPerceptionModel(load_pretrained=False)
+model.load_state_dict(torch.load("checkpoints/multitask_best.pth", map_location="cpu"))
+model.eval()
+
+with torch.no_grad():
+    out = model(images)          # images: [B, 3, 224, 224], ImageNet mean/std normalized
+```
+
+### Training configuration
+
+All stages use gradient clipping at 1.0, an 80/20 split (seed 42) and input size 224×224.
+
+| Stage | Init | Loss | Optimizer / schedule | Epochs × batch | Checkpoint chosen by |
+|---|---|---|---|---|---|
+| `class_train.py` | scratch (dropout 0.6) | CE, label smoothing 0.1 | Adam 5e-5, wd 5e-4, StepLR ×0.5 / 10 ep | 40 × 32 | val macro-F1 |
+| `loc_train.py` | encoder ← classifier (dropout 0.5) | `w_iou·(1−IoU) + w_l1·SmoothL1 + 0.05·size-L1`, with (w_iou, w_l1) = (0.2, 1.0) → (0.7, 1.0) at ep 5 → (1.2, 0.5) at ep 15 | Adam 5e-5, wd 5e-4, StepLR ×0.5 / 5 ep. Encoder frozen until ep 10, then block 5 unfrozen and the optimizer re-created for head + block 5 at lr 1e-6, wd 1e-3 | 70 × 32 | 0.6·Acc@0.5 + 0.4·Acc@0.75 |
+| `seg_train.py` | encoder ← classifier, fully fine-tuned (dropout 0.5) | 0.3·class-weighted CE + 0.7·class-weighted soft-Dice (3 classes) | Adam 1e-4, wd 1e-5, ReduceLROnPlateau (max Dice, patience 3, ×0.5) | 40 × 16 | val macro Dice |
+| `train.py` | all three checkpoints (dropout 0.5 / 0.3 / 0.3) | `1·CE + 5·IoU + 2·CE` (classification, localization, segmentation) | Adam 1e-4, StepLR ×0.1 / 10 ep | 20 × 32 | val macro Dice |
+
+---
+
+## Results
+
+All numbers are on a held-out 20% validation split (random, seed 42) of the annotated Oxford-IIIT images. The same split was used to select checkpoints, and the official test split is not used for any reported number.
+
+| Task | Metric | Result |
+|---|---|---|
+| Breed classification (37 classes) | Macro F1 | **0.46** (train 0.98) |
+| Head localization | Fraction of boxes with IoU ≥ 0.5 | **0.79** |
+| Trimap segmentation (pet / background / border) | Macro Dice · pixel accuracy | **0.82** · 0.89 |
+
+---
+
+## How it works
+
+```
+                      ┌─ VGG11 encoder ① → FC head ───────────→ breed logits        [B, 37]
+ image [B,3,224,224] ─┼─ VGG11 encoder ② → regression head ───→ box (x_c,y_c,w,h)   [B, 4]
+                      └─ VGG11 encoder ③ → U-Net decoder ─────→ trimap logits       [B, 3, 224, 224]
+```
+
+The model is built in four stages. Each stage starts from the previous stage's weights:
+
+1. **Classification**: VGG11 + BatchNorm + custom dropout, trained from scratch on 37 breeds.
+2. **Localization**: the classifier's encoder plus a new regression head. The encoder is frozen for 10 epochs, then block 5 is unfrozen at a much smaller learning rate.
+3. **Segmentation**: the classifier's encoder (fully fine-tuned) plus a symmetric U-Net decoder with transposed-convolution upsampling and skip connections.
+4. **Unified model**: `MultiTaskPerceptionModel` loads the three trained checkpoints and fine-tunes them jointly with a weighted multi-task loss. A single `forward(x)` returns all three outputs.
+
+The unified model holds three task-specific encoders rather than one shared backbone (see [Design decisions](#design-decisions)).
+
+---
+
+
+## Experiments & findings
+
+Every experiment is logged to Weights & Biases. The detailed write-ups are in **[FINDINGS.md](FINDINGS.md)**, and the interactive plots are in the **[W&B report](https://forge.coreweave.com/wandb/prasid-indian-institute-of-technology-madras/da6401_assignment2/reports/DA6401-Assignment-2-PH21B007-PRASID--VmlldzoxNjQ4OTM5Mw)**.
+
+| Topic | Headline finding |
+|---|---|
+| BatchNorm and trainability | At LR 5e-5, VGG11 without BatchNorm never trained (F1 ≈ 0) while the BatchNorm run reached val F1 ≈ 0.4 in 20 epochs. Without BN the activation std collapsed toward zero. |
+| Dropout and the generalization gap | With dropout 0 / 0.2 / 0.5 all runs ended at val loss ≈ 2.5. Dropout 0.5 slowed the decline of training loss but did not clearly improve final validation loss in 25 epochs. |
+| Transfer-learning strategies (segmentation) | Full fine-tuning (Dice 0.82) > partial fine-tuning of blocks 4–5 (0.79) > frozen backbone (0.73). |
+| Feature maps | Block 1 keeps edges, silhouettes and texture. Block 5 maps are sparse and abstract. |
+| Localization: confidence vs IoU | On 15 sampled images, mean IoU was 0.70 and 13 of 15 boxes had IoU ≥ 0.5. Both failures came with high classifier confidence, which shows that breed confidence says little about box quality. |
+| Dice vs pixel accuracy | Pixel accuracy (0.89) sits well above macro Dice (0.82) because the majority background class dominates the pixel count. |
+| In-the-wild images | Segmentation held up best. Breed predictions were wrong on all three images (one dog is a breed outside the 37 classes, and both cats were labeled as dog breeds). The box missed the subject on a cluttered outdoor scene. |
+| Multi-task retrospective | Localization and segmentation show near-zero train/val gaps. Classification is the only overfitting source. |
+
+---
+
+## Design decisions
+
+- **BatchNorm before ReLU, `bias=False` convs.** Normalizing pre-activations stabilized training. The BatchNorm ablation shows the difference between a model that learns and one that doesn't.
+- **Dropout placement.** Dropout sits after the FC layers of the classification and localization heads, where most of the parameters are, and in the two deepest decoder stages. The convolutional backbone and the shallow decoder stages are left undropped to protect spatial detail.
+- **Localization loss.** IoU loss is scale-invariant and optimizes the evaluation metric directly, but it gives no gradient for non-overlapping boxes. It is therefore mixed with SmoothL1 and a size term, ramping the IoU weight up and the L1 weight down over training.
+- **Segmentation loss.** Cross-entropy provides stable per-pixel gradients, and soft Dice optimizes region overlap and is less dominated by the majority class. Dice is computed over all three classes, so the border class is supervised too.
+- **Transposed-convolution upsampling.** The decoder learns its own upsampling kernels instead of using fixed interpolation.
+- **Three encoders in the unified model.** Each task's encoder starts from its own specialized checkpoint, which avoids gradient interference between tasks by construction and keeps each task's accuracy. The cost is roughly 3× the encoder parameters and no feature sharing between tasks.
+
+---
+
+## Known limitations & next steps
+
+- **Augmentation is defined but not effectively applied.** The training scripts assign `train_transform` and `val_transform` to the same underlying dataset object, so the second assignment wins and training runs with resize + normalize only. This is the most likely reason for the large classification train/validation gap. The fix is to build two dataset instances (one per transform) and index both with the same split indices.
+- **Classification overfits.** Validation macro-F1 is 0.46 against 0.98 on train. The 25088→4096→4096 head is very large for ≈3k training images. Candidate fixes are real augmentation, a smaller head or global pooling, and stronger regularization.
+- **Segmentation class weights were not tuned.** The weights `[0.2, 0.5, 0.3]` are indexed by `[pet, background, border]`, so background is weighted highest.
+- **No shared backbone.** A true shared encoder with light task adapters would cut parameters and test whether the tasks help or hurt each other.
+- **Validation, not test.** Reported numbers come from a 20% split that also drove checkpoint selection.
+- **No CLI configuration yet.** Hyperparameters live as constants at the top of each training script.
+
+---
+
+## Background
+
+Built using concepts taught in the course *DA6401: Introduction to Deep Learning* (IIT Madras).
+
+Part of a deep learning project series:
+[MLP from Scratch](https://github.com/4prasid/MLP-from-scratch) · [Multi-task Vision VGG11](https://github.com/4prasid/multitask-vision-vgg11) · Transformer NMT
+
+## License
+
+[MIT](LICENSE)
