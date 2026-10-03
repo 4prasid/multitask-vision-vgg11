@@ -12,7 +12,7 @@ from models.localization import VGG11Localizer
 from losses.iou_loss import IoULoss
 from models.classification import VGG11Classifier
 
-wandb.login(key="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")
+wandb.login(key="") # write the wandb key here
 
 def coco_to_center(boxes):
     """
