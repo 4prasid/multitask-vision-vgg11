@@ -22,7 +22,7 @@ from albumentations.pytorch import ToTensorV2
 from data.pets_dataset import OxfordIIITPetDataset
 from models.classification import VGG11Classifier
 
-wandb.login(key="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")
+wandb.login(key="") # write the wandb key here
 
 # config
 
