@@ -29,7 +29,7 @@ wandb.login(key="") # write the wandb key here
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BATCH_SIZE   = 32
-EPOCHS       = 20          # 20 epochs is enough to reveal the generalisation gap
+EPOCHS       = 25          
 LR           = 5e-5
 DEVICE       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
