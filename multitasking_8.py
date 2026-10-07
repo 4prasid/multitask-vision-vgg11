@@ -351,7 +351,7 @@ def main():
         torch.cuda.empty_cache()
 
     BS = 8    # Reduced: model has 3 VGG11 encoders = 3x memory
-    EP = 30
+    EP = 20
 
     trainer = Trainer(model, bs=BS, ep=EP, device=device)
 
