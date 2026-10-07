@@ -49,7 +49,7 @@ The unified model holds three task-specific encoders rather than one shared back
 ## Repository structure
 
 ```
-.
+multitask-vision-vgg11/
 ├── data/
 │   └── pets_dataset.py              # Oxford-IIIT Pet loader -> (image, label, bbox, mask)
 ├── losses/
@@ -61,15 +61,16 @@ The unified model holds three task-specific encoders rather than one shared back
 │   ├── localization.py              # VGG11Localizer
 │   ├── segmentation.py              # VGG11UNet
 │   └── multitask.py                 # MultiTaskPerceptionModel (unified)
+├── Experiments/
+│   ├── multitasking_8.py                # Experiment: joint multi-task training
+│   ├── inference_7.py                   # Experiment: Run the pipeline on your own images
+│   ├── batchnorm_1.py                   # Experiment: BatchNorm ablation
+│   ├── dropout_2.py                     # Experiment: dropout sweep
+│   ├── transfer_learning_3_4_6.py       # Experiment: transfer learning, feature maps, Dice vs pixel accuracy
+│   └── object_detection_5.py            # Experiment: detection IoU gallery
 ├── class_train.py                   # Stage 1: classification
 ├── loc_train.py                     # Stage 2: localization
 ├── seg_train.py                     # Stage 3: segmentation (CE + Dice)
-├── multitasking_8.py                # Stage 4: joint multi-task training
-├── inference_7.py                   # Run the pipeline on your own images
-├── batchnorm_1.py                   # Experiment: BatchNorm ablation
-├── dropout_2.py                     # Experiment: dropout sweep
-├── transfer_learning_3_4_6.py       # Experiment: transfer learning, feature maps, Dice vs pixel accuracy
-├── object_detection_5.py            # Experiment: detection IoU gallery
 ├── requirements.txt
 ├── FINDINGS.md                      # Full written analysis of the experiments
 └── LICENSE
