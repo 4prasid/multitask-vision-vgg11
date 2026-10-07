@@ -2,7 +2,7 @@
 
 A from-scratch **VGG11** pipeline in PyTorch that, in a single forward pass, predicts a pet's **breed** (37 classes), its **head bounding box**, and a pixel-wise **trimap segmentation**. Built on the Oxford-IIIT Pet dataset with a custom dropout layer, a custom IoU loss, and a U-Net decoder that upsamples with transposed convolutions.
 
-🔗 [W&B Report](https://forge.coreweave.com/wandb/prasid-indian-institute-of-technology-madras/da6401_assignment2/reports/VGG11-Multi-Task-Vision--VmlldzoxNjQ4OTM5Mw) &nbsp;|&nbsp; 🔗 [GitHub Repo](https://github.com/4prasid/multitask-vision-vgg11)
+🔗 [W&B Report](https://api.wandb.ai/links/prasid-indian-institute-of-technology-madras/u2yoef01) &nbsp;
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/4045216d-a9af-4b02-a42f-621effa09c66" alt="Pipeline output on an unseen image" width="48%" />
