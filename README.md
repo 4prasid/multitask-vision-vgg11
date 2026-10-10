@@ -2,7 +2,7 @@
 
 A from-scratch **VGG11** pipeline in PyTorch that, in a single forward pass, predicts a pet's **breed** (37 classes), its **head bounding box**, and a pixel-wise **trimap segmentation**. Built on the Oxford-IIIT Pet dataset with a custom dropout layer, a custom IoU loss, and a U-Net decoder that upsamples with transposed convolutions.
 
-🔗 [W&B Report](https://api.wandb.ai/links/prasid-indian-institute-of-technology-madras/u2yoef01) &nbsp;
+**📊 [Interactive W&B report](https://api.wandb.ai/links/prasid-indian-institute-of-technology-madras/u2yoef01)**
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/4045216d-a9af-4b02-a42f-621effa09c66" alt="Pipeline output on an unseen image" width="48%" />
@@ -62,12 +62,12 @@ multitask-vision-vgg11/
 │   ├── segmentation.py              # VGG11UNet
 │   └── multitask.py                 # MultiTaskPerceptionModel (unified)
 ├── Experiments/
-│   ├── multitasking_8.py                # Experiment: joint multi-task training
-│   ├── inference_7.py                   # Experiment: Run the pipeline on your own images
-│   ├── batchnorm_1.py                   # Experiment: BatchNorm ablation
-│   ├── dropout_2.py                     # Experiment: dropout sweep
-│   ├── transfer_learning_3_4_6.py       # Experiment: transfer learning, feature maps, Dice vs pixel accuracy
-│   └── object_detection_5.py            # Experiment: detection IoU gallery
+│   ├── multitasking_8.py                # joint multi-task training
+│   ├── inference_7.py                   # Run the pipeline on your own images
+│   ├── batchnorm_1.py                   # BatchNorm ablation
+│   ├── dropout_2.py                     # dropout sweep
+│   ├── transfer_learning_3_4_6.py       # transfer learning, feature maps, Dice vs pixel accuracy
+│   └── object_detection_5.py            # detection IoU gallery
 ├── class_train.py                   # Stage 1: classification
 ├── loc_train.py                     # Stage 2: localization
 ├── seg_train.py                     # Stage 3: segmentation (CE + Dice)
@@ -241,6 +241,17 @@ All stages use gradient clipping at 1.0, an 80/20 split (seed 42) and input size
 
 ---
 
+## Design decisions
+
+- **BatchNorm before ReLU, `bias=False` convs.** Normalizing pre-activations stabilized training. The BatchNorm ablation shows the difference between a model that learns and one that doesn't.
+- **Dropout placement.** Dropout sits after the FC layers of the classification and localization heads, where most of the parameters are, and in the two deepest decoder stages. The convolutional backbone and the shallow decoder stages are left undropped to protect spatial detail.
+- **Localization loss.** IoU loss is scale-invariant and optimizes the evaluation metric directly, but it gives no gradient for non-overlapping boxes. It is therefore mixed with SmoothL1 and a size term, ramping the IoU weight up and the L1 weight down over training.
+- **Segmentation loss.** `seg_train.py` (the checkpoint that initializes the unified model) combines class-weighted cross-entropy with a soft Dice loss over all three classes, so the border class is supervised too. The transfer-learning and joint-training experiments use plain cross-entropy for simplicity.
+- **Transposed-convolution upsampling.** The decoder learns its own upsampling kernels instead of using fixed interpolation.
+- **Three encoders in the unified model.** Each task's encoder starts from its own specialized checkpoint, which avoids gradient interference between tasks by construction and keeps each task's accuracy. The cost is roughly 3× the encoder parameters and no feature sharing between tasks.
+
+---
+
 ## Experiments & findings
 
 Every experiment is logged to Weights & Biases. The detailed write-ups, including how each metric is defined and the caveats of each run, are in **[FINDINGS.md](FINDINGS.md)**, and the interactive plots are in the **[W&B report](https://forge.coreweave.com/wandb/prasid-indian-institute-of-technology-madras/da6401_assignment2/reports/VGG11-Multi-Task-Vision--VmlldzoxNjQ4OTM5Mw)**.
@@ -258,16 +269,18 @@ Every experiment is logged to Weights & Biases. The detailed write-ups, includin
 
 ---
 
-## Design decisions
+## Reproducing the experiments
 
-- **BatchNorm before ReLU, `bias=False` convs.** Normalizing pre-activations stabilized training. The BatchNorm ablation shows the difference between a model that learns and one that doesn't.
-- **Dropout placement.** Dropout sits after the FC layers of the classification and localization heads, where most of the parameters are, and in the two deepest decoder stages. The convolutional backbone and the shallow decoder stages are left undropped to protect spatial detail.
-- **Localization loss.** IoU loss is scale-invariant and optimizes the evaluation metric directly, but it gives no gradient for non-overlapping boxes. It is therefore mixed with SmoothL1 and a size term, ramping the IoU weight up and the L1 weight down over training.
-- **Segmentation loss.** `seg_train.py` (the checkpoint that initializes the unified model) combines class-weighted cross-entropy with a soft Dice loss over all three classes, so the border class is supervised too. The transfer-learning and joint-training experiments use plain cross-entropy for simplicity.
-- **Transposed-convolution upsampling.** The decoder learns its own upsampling kernels instead of using fixed interpolation.
-- **Three encoders in the unified model.** Each task's encoder starts from its own specialized checkpoint, which avoids gradient interference between tasks by construction and keeps each task's accuracy. The cost is roughly 3× the encoder parameters and no feature sharing between tasks.
+The experiment scripts import from the repository root, so run them from there with `PYTHONPATH=.`:
 
----
+```bash
+PYTHONPATH=. python Experiments/batchnorm_1.py                 # BatchNorm ablation
+PYTHONPATH=. python Experiments/dropout_2.py                   # dropout sweep
+PYTHONPATH=. python Experiments/transfer_learning_3_4_6.py     # transfer learning, feature maps, Dice vs pixel accuracy
+PYTHONPATH=. python Experiments/object_detection_5.py          # detection IoU gallery
+PYTHONPATH=. python Experiments/inference_7.py                 # Run the pipeline on your own images
+PYTHONPATH=. python Experiments/multitasking_8.py              # joint multi-task training
+```
 
 ---
 
@@ -275,7 +288,10 @@ Every experiment is logged to Weights & Biases. The detailed write-ups, includin
 
 Built using concepts taught in the course *DA6401: Introduction to Deep Learning* (IIT Madras).
 
-Part of a deep learning project series: [MLP from Scratch](https://github.com/4prasid/MLP-from-scratch) · [Multi-task Vision VGG11](https://github.com/4prasid/multitask-vision-vgg11) · Transformer NMT
+Part of a deep learning project series:
+[MLP from Scratch](https://github.com/4prasid/MLP-from-scratch) · [Multi-task Vision](https://github.com/4prasid/multitask-vision-vgg11) · [Transformer NMT](https://github.com/4prasid/transformer-nmt-from-scratch)
+
+---
 
 ## License
 
