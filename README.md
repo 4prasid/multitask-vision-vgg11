@@ -256,7 +256,7 @@ All stages use gradient clipping at 1.0, an 80/20 split (seed 42) and input size
 
 Every experiment is logged to Weights & Biases. The detailed write-ups, including how each metric is defined and the caveats of each run, are in **[FINDINGS.md](FINDINGS.md)**, and the interactive plots are in the **[W&B report](https://forge.coreweave.com/wandb/prasid-indian-institute-of-technology-madras/da6401_assignment2/reports/VGG11-Multi-Task-Vision--VmlldzoxNjQ4OTM5Mw)**.
 
-| Topic | Headline finding |
+| Topic | key finding |
 |---|---|
 | BatchNorm and trainability | At LR 5e-5 with PyTorch default initialization, VGG11 without BatchNorm never trained (F1 ≈ 0), while the BatchNorm run reached val F1 ≈ 0.4 in 20 epochs. Without BN the std of the 2nd conv layer's output collapsed toward zero. |
 | Dropout and the generalization gap | With dropout 0 / 0.2 / 0.5 all runs ended at val loss ≈ 2.5 after 25 epochs. Dropout 0.5 slowed the decline of training loss but did not clearly improve final validation loss. |
