@@ -14,17 +14,17 @@ Every training run uses the same random 80/20 split (seed 42) of the annotated O
 |---|---|---|
 | Macro F1 | `sklearn` macro-averaged F1 over the 37 breeds | BatchNorm, dropout, joint training |
 | IoU accuracy @ 0.5 | Fraction of validation images whose predicted box has IoU > 0.5 with the ground-truth head box | Joint training |
-| Pixel accuracy | Correctly classified pixels ÷ all pixels, over all three classes (border included). Averaged per image in the transfer-learning runs, pooled over all validation pixels in joint training | Transfer learning, Dice vs pixel accuracy, joint training |
+| Pixel accuracy | Correctly classified pixels / all pixels, over all three classes (border included). Averaged per image in the transfer-learning runs, pooled over all validation pixels in joint training | Transfer learning, Dice vs pixel accuracy, joint training |
 | Macro Dice (3-class) | Dice of pet, background and border computed per image, averaged over the three classes, then averaged over images (ε = 1e-6 in numerator and denominator) | Transfer learning, Dice vs pixel accuracy |
-| Class-1 Dice (joint training) | Dice of class index 1 only, with border pixels ignored, computed per batch and averaged. With the convention above, class 1 is the **background**, so this value measures how well the background is separated from the pet, not how well the pet is segmented | Joint training (the logged `val_dice`) |
+| Class-1 Dice (joint training) | Dice of class index 1 only, with border pixels ignored, computed per batch and averaged. | Joint training (the logged `val_dice`) |
 
 ---
 
 ## 1. Internal Dynamics
 
-**Setup.** Two VGG11 classifiers were trained under identical conditions: Adam, LR 5e-5, weight decay 5e-4, StepLR ×0.5 every 10 epochs, batch size 32, 20 epochs, label smoothing 0.1, dropout 0.5 in the two FC layers. One model uses the repository's VGG11 encoder (Conv → BatchNorm → ReLU, bias-free convolutions). The other is the same architecture without BatchNorm (convolutions with bias, PyTorch's default initialization). After every epoch a fixed validation batch (the first one) is passed through each model in eval mode, and the output of the **second convolutional layer** (`Conv2d 64→128`, the first conv of block 2) is recorded. That tensor is the raw convolution output, captured before BatchNorm and ReLU.
+**Setup:** Two VGG11 classifiers were trained under identical conditions: Adam, LR 5e-5, weight decay 5e-4, StepLR ×0.5 every 10 epochs, batch size 32, 20 epochs, label smoothing 0.1, dropout 0.5 in the two FC layers. One model uses the repository's VGG11 encoder (Conv → BatchNorm → ReLU, bias-free convolutions). The other is the same architecture without BatchNorm (convolutions with bias, PyTorch's default initialization). After every epoch a fixed validation batch (the first one) is passed through each model in eval mode, and the output of the **second convolutional layer** (`Conv2d 64→128`, the first conv of block 2) is recorded. That tensor is the raw convolution output, captured before BatchNorm and ReLU.
 
-**Results.**
+**Results:**
 
 | | Without BatchNorm | With BatchNorm |
 |---|---|---|
@@ -36,19 +36,19 @@ Every training run uses the same random 80/20 split (seed 42) of the annotated O
 | Train F1 | ≈ 0 throughout | ≈ 0.04 → ≈ 0.9 |
 | Val F1 | ≈ 0 throughout | ≈ 0.02 → ≈ 0.4 |
 
-**What happened without BatchNorm.** The loss stays at ≈ 3.6, which is ln 37, the cross-entropy of a uniform prediction over 37 classes. The network never moves off chance. PyTorch's default convolution and linear initialization has weight variance of about 1/(3·fan_in), which shrinks the second moment of the signal by roughly a factor of 6 at every Conv/Linear + ReLU pair. After 8 convolutions and 3 FC layers, almost nothing reaches the logits, and the gradients flowing back are equally small, so the weights barely update. The probed layer shows the same thing from the inside: its output standard deviation decays to zero as training proceeds and the histogram collapses onto zero.
+**without BatchNorm:** The loss stays at ≈ 3.6, which is ln 37, the cross-entropy of a uniform prediction over 37 classes. The network never moves off chance. PyTorch's default convolution and linear initialization has weight variance of about 1/(3·fan_in), which shrinks the second moment of the signal by roughly a factor of 6 at every Conv/Linear + ReLU pair. After 8 convolutions and 3 FC layers, almost nothing reaches the logits, and the gradients flowing back are equally small, so the weights barely update. The probed layer shows the same thing from the inside: its output standard deviation decays to zero as training proceeds and the histogram collapses onto zero.
 
-**What happened with BatchNorm.** BatchNorm in block 1 re-centres and re-scales the signal that enters the probed layer at every step, so its statistics stay in a healthy range for all 20 epochs (the plotted tensor is the pre-BatchNorm conv output, so the stability seen here comes from the normalized inputs it receives, not from BatchNorm acting on that tensor itself). The model learns from the first epoch: validation F1 climbs from ≈ 0.02 to ≈ 0.35 by epoch 11 and ends near 0.4, while train F1 reaches ≈ 0.9. The gap between those two curves is the over-fitting examined in the next section.
+**with BatchNorm:** BatchNorm in block 1 re-centres and re-scales the signal that enters the probed layer at every step, so its statistics stay in a healthy range for all 20 epochs (the plotted tensor is the pre-BatchNorm conv output, so the stability seen here comes from the normalized inputs it receives, not from BatchNorm acting on that tensor itself). The model learns from the first epoch: validation F1 climbs from ≈ 0.02 to ≈ 0.35 by epoch 11 and ends near 0.4, while train F1 reaches ≈ 0.9. The gap between those two curves is the over-fitting examined in the next section.
 
-**Convergence speed and maximum stable learning rate.** At the single learning rate tested (5e-5), the BatchNorm network converged and the unnormalized one did not move. This experiment did not sweep the learning rate and did not try He initialization for the unnormalized network, so it shows that BatchNorm makes training robust to a poor initialization and a small step size; it does not measure how much larger a learning rate each variant could tolerate. The usual explanation for that further benefit is that normalization bounds activation scale and smooths the loss surface, so steps stay predictable at higher learning rates.
+**Convergence speed and maximum stable learning rate:** At the single learning rate tested (5e-5), the BatchNorm network converged and the unnormalized one did not move. This experiment did not sweep the learning rate and did not try He initialization for the unnormalized network, so it shows that BatchNorm makes training robust to a poor initialization and a small step size; it does not measure how much larger a learning rate each variant could tolerate. The usual explanation for that further benefit is that normalization bounds activation scale and smooths the loss surface, so steps stay predictable at higher learning rates.
 
 ---
 
 ## 2. The Regularization Effect of Dropout
 
-**Setup.** Three BatchNorm VGG11 classifiers were trained for 25 epochs with identical settings (Adam, LR 5e-5, weight decay 5e-4, StepLR ×0.5 every 10 epochs, batch 32, label smoothing 0.1). The only difference is the dropout probability in the two 4096-unit FC layers, implemented with the repository's `CustomDropout` (inverted Bernoulli mask during training, identity in eval): p = 0, 0.2 and 0.5. Training used resize and normalization only: the augmentation pipeline defined in the script (flip, shift/scale/rotate, colour jitter, noise) is not applied, because the train and validation subsets share one dataset object and the validation transform overwrites the training one.
+**Setup:** Three BatchNorm VGG11 classifiers were trained for 25 epochs with identical settings (Adam, LR 5e-5, weight decay 5e-4, StepLR ×0.5 every 10 epochs, batch 32, label smoothing 0.1). The only difference is the dropout probability in the two 4096-unit FC layers, implemented with the repository's `CustomDropout` (inverted Bernoulli mask during training, identity in eval): p = 0, 0.2 and 0.5. Training used resize and normalization only: the augmentation pipeline defined in the script (flip, shift/scale/rotate, colour jitter, noise) is not applied, because the train and validation subsets share one dataset object and the validation transform overwrites the training one.
 
-**Results.**
+**Results:**
 
 | | p = 0 | p = 0.2 | p = 0.5 |
 |---|---|---|---|
@@ -58,21 +58,21 @@ Every training run uses the same random 80/20 split (seed 42) of the annotated O
 
 The overfit gap in these plots is the **train F1 minus validation F1**, not a loss difference.
 
-**Reading the curves.**
+**Curves:**
 
-- **Training loss.** With label smoothing 0.1 over 37 classes, the smallest attainable cross-entropy is ≈ 0.67, the entropy of the smoothed target. The p = 0 and p = 0.2 runs end at ≈ 0.7, so they fit the training set essentially perfectly. The p = 0.5 run is slower. Part of that is regularization (each update trains a random sub-network), and part is measurement: training loss and F1 are computed with dropout active, so they are depressed in proportion to p.
-- **Validation loss.** All three runs finish within about 0.1 of each other. The p = 0 and p = 0.2 runs have visible validation-loss spikes around epochs 5–8; the p = 0.5 run has no spike of comparable size early on (it shows a smaller bump to ≈ 2.8 near epoch 17). None of the three is clearly better at the end.
-- **Generalization gap.** Dropout changed *when* the gap opened, not how large it ended up. The p = 0.5 gap grows more gradually and reaches the same ≈ 0.6 plateau about six to nine epochs later than the other two.
+- **Training loss:** With label smoothing 0.1 over 37 classes, the smallest attainable cross-entropy is ≈ 0.67, the entropy of the smoothed target. The p = 0 and p = 0.2 runs end at ≈ 0.7, so they fit the training set essentially perfectly. The p = 0.5 run is slower. Part of that is regularization (each update trains a random sub-network), and part is measurement: training loss and F1 are computed with dropout active, so they are depressed in proportion to p.
+- **Validation loss:** All three runs finish within about 0.1 of each other. The p = 0 and p = 0.2 runs have visible validation-loss spikes around epochs 5–8; the p = 0.5 run has no spike of comparable size early on (it shows a smaller bump to ≈ 2.8 near epoch 17). None of the three is clearly better at the end.
+- **Generalization gap:** Dropout changed *when* the gap opened, not how large it ended up. The p = 0.5 gap grows more gradually and reaches the same ≈ 0.6 plateau about six to nine epochs later than the other two.
 
-**How the custom dropout alters generalization.** During training the layer zeroes each activation with probability p and rescales the survivors by 1/(1−p), so the expected activation is unchanged and no unit can rely on a specific partner being present. That slows memorization, which is what the delayed gap shows. At evaluation the layer is the identity, so the validation numbers describe the full network deterministically; this train/eval split is what makes the gap comparable across the three runs.
+**How the custom dropout alters generalization:** During training the layer zeroes each activation with probability p and rescales the survivors by 1/(1−p), so the expected activation is unchanged and no unit can rely on a specific partner being present. That slows memorization, which is what the delayed gap shows. At evaluation the layer is the identity, so the validation numbers describe the full network deterministically; this train/eval split is what makes the gap comparable across the three runs.
 
-**Why dropout alone did not close the gap.** The classifier head has about 120M parameters (25088→4096→4096→37), against ≈ 3k training images and a convolutional encoder of only ≈ 9.2M parameters. The head can memorize the training set under any of these dropout rates, and the only other regularizers are weight decay and label smoothing. Closing the gap would need more effective regularization of the data side (working augmentation) or a smaller head; p = 0.5 on the FC layers alone is not enough here. The joint-training section shows the same ≈ 2.5 validation loss for the classifier.
+**Why dropout alone did not close the gap:** The classifier head has about 120M parameters (25088→4096→4096→37), against ≈ 3k training images and a convolutional encoder of only ≈ 9.2M parameters. The head can memorize the training set under any of these dropout rates, and the only other regularizers are weight decay and label smoothing. Closing the gap would need more effective regularization of the data side (working augmentation) or a smaller head; p = 0.5 on the FC layers alone is not enough here. The joint-training section shows the same ≈ 2.5 validation loss for the classifier.
 
 ---
 
 ## 3. Transfer Learning Showdown
 
-**Setup.** A VGG11-encoder U-Net (transposed-convolution decoder with skip connections) was trained for 20 epochs with each of three strategies. In every case the encoder starts from the classifier checkpoint and the decoder is randomly initialized. Settings: plain cross-entropy, Adam LR 1e-4, weight decay 1e-4, StepLR ×0.5 every 8 epochs, batch 16, gradient clipping at 1.0.
+**Setup:** A VGG11-encoder U-Net (transposed-convolution decoder with skip connections) was trained for 20 epochs with each of three strategies. In every case the encoder starts from the classifier checkpoint and the decoder is randomly initialized. Settings: plain cross-entropy, Adam LR 1e-4, weight decay 1e-4, StepLR ×0.5 every 8 epochs, batch 16, gradient clipping at 1.0.
 
 | Strategy | What is trained |
 |---|---|
@@ -82,7 +82,7 @@ The overfit gap in these plots is the **train F1 minus validation F1**, not a lo
 
 In all three runs the model is in training mode, so the BatchNorm layers of a "frozen" encoder still normalize with batch statistics and update their running statistics; the frozen weights do not change, but the encoder's normalization adapts to the segmentation data.
 
-**Results (validation, final epoch).**
+**Results (validation, final epoch):**
 
 | Strategy | Dice (3-class macro) | Val loss | Convergence |
 |---|---|---|---|
@@ -90,32 +90,32 @@ In all three runs the model is in training mode, so the BatchNorm layers of a "f
 | Partial fine-tuning | 0.79 | 0.42 | Moderate and stable |
 | Frozen | 0.73 | 0.49 | Moderate, with oscillating val loss from epoch ≈ 10 |
 
-**Empirical comparison.**
+**Empirical comparison:**
 
-- **Convergence speed.** Full fine-tuning reaches Dice ≈ 0.73 by epoch 2–3. At the same point the partial run is at ≈ 0.70 and the frozen run at ≈ 0.62. The ordering never changes afterwards.
-- **Stability.** The frozen run's validation loss oscillates between ≈ 0.43 and ≈ 0.49 from about epoch 10 on. The full run's validation loss bottoms out at ≈ 0.31–0.32 around epochs 12–15 and drifts up slightly to ≈ 0.34 at epoch 20 while Dice keeps improving slowly; the partial run behaves similarly (≈ 0.35 rising to ≈ 0.42).
-- **Final performance.** Full > partial > frozen on both Dice and loss. The gap between full and frozen (0.09 Dice) is the clear effect. The 0.03 gap between full and partial is small enough that a single run per strategy cannot separate it from run-to-run noise.
-- **Cost per epoch.** Wall-clock time per epoch was not tabulated. Structurally, a frozen encoder needs no backward pass through its weights, partial fine-tuning back-propagates through two blocks, and full fine-tuning through all five, so cost per epoch rises in that order.
+- **Convergence speed:** Full fine-tuning reaches Dice ≈ 0.73 by epoch 2–3. At the same point the partial run is at ≈ 0.70 and the frozen run at ≈ 0.62. The ordering never changes afterwards.
+- **Stability:** The frozen run's validation loss oscillates between ≈ 0.43 and ≈ 0.49 from about epoch 10 on. The full run's validation loss bottoms out at ≈ 0.31–0.32 around epochs 12–15 and drifts up slightly to ≈ 0.34 at epoch 20 while Dice keeps improving slowly; the partial run behaves similarly (≈ 0.35 rising to ≈ 0.42).
+- **Final performance:** Full > partial > frozen on both Dice and loss. The gap between full and frozen (0.09 Dice) is the clear effect. The 0.03 gap between full and partial is small enough that a single run per strategy cannot separate it from run-to-run noise.
+- **Cost per epoch:** Structurally, a frozen encoder needs no backward pass through its weights, partial fine-tuning back-propagates through two blocks, and full fine-tuning through all five, so cost per epoch rises in that order.
 
-**Why unfreezing helps.** The early blocks learn generic, low-level features (edges, colour gradients, simple textures) that are useful for any image task, so freezing them (as the frozen and partial strategies do) costs little. The later blocks are different. They were trained to separate 37 breeds, which rewards global, discriminative patterns and actively discards spatial detail through repeated pooling. A segmentation decoder needs the opposite: dense, spatially precise features at every skip-connection depth. With a frozen encoder the decoder must make do with representations built for classification, which caps the achievable Dice. Unfreezing the late blocks lets the segmentation loss reshape the semantic features that feed the deepest skip connections, and unfreezing everything lets it also adjust mid-level features. Catastrophic forgetting is not a practical risk here because the pretraining and target data are the same images, so the pretrained features are already relevant; in a cross-domain transfer, partial fine-tuning would be the safer default.
+**Why unfreezing helps:** The early blocks learn generic, low-level features (edges, colour gradients, simple textures) that are useful for any image task, so freezing them (as the frozen and partial strategies do) costs little. The later blocks are different. They were trained to separate 37 breeds, which rewards global, discriminative patterns and actively discards spatial detail through repeated pooling. A segmentation decoder needs the opposite: dense, spatially precise features at every skip-connection depth. With a frozen encoder the decoder must make do with representations built for classification, which caps the achievable Dice. Unfreezing the late blocks lets the segmentation loss reshape the semantic features that feed the deepest skip connections, and unfreezing everything lets it also adjust mid-level features. Catastrophic forgetting is not a practical risk here because the pretraining and target data are the same images, so the pretrained features are already relevant; in a cross-domain transfer, partial fine-tuning would be the safer default.
 
 ---
 
 ## 4. Inside the Black Box: Feature Maps
 
-**Setup.** The first image of the annotated list (an Abyssinian cat, label 0) is passed through the trained classifier. Two feature maps are extracted: the output of **block 1** (the first convolution, 64 channels at 224×224) and the output of the **last convolution of block 5, before the final max-pool** (512 channels at 14×14). The first 16 channels of each are shown with a viridis colormap. They are the first 16 channels in index order, not a selection of the most active ones.
+**Setup:** The first image of the annotated list (an Abyssinian cat, label 0) is passed through the trained classifier. Two feature maps are extracted: the output of **block 1** (the first convolution, 64 channels at 224×224) and the output of the **last convolution of block 5, before the final max-pool** (512 channels at 14×14). The first 16 channels of each are shown with a viridis colormap. They are the first 16 channels in index order, not a selection of the most active ones.
 
-**Block 1.** The maps look like filtered copies of the photograph. The cat's silhouette, the outline of its face, the fur texture and the edges of the surrounding blue fabric are all visible. Different channels do different low-level jobs: some respond to edges along the body contour, some to the orange-versus-blue colour boundary, and a few suppress the animal and highlight the background. Spatial layout is fully preserved at this depth.
+**Block 1:** The maps look like filtered copies of the photograph. The cat's silhouette, the outline of its face, the fur texture and the edges of the surrounding blue fabric are all visible. Different channels do different low-level jobs: some respond to edges along the body contour, some to the orange-versus-blue colour boundary, and a few suppress the animal and highlight the background. Spatial layout is fully preserved at this depth.
 
-**Block 5.** The maps are 14×14, mostly near zero, with a few bright blobs at isolated locations. They no longer resemble the input. Each cell has a stride of 16 pixels but a theoretical receptive field of about 134×134 pixels, more than half the 224×224 input, so a single cell integrates evidence from a large part of the image. The classifier then flattens the 7×7×512 map after the last pool (it does not use global average pooling) and feeds it to the FC layers.
+**Block 5:** The maps are 14×14, mostly near zero, with a few bright blobs at isolated locations. They no longer resemble the input. Each cell has a stride of 16 pixels but a theoretical receptive field of about 134×134 pixels, more than half the 224×224 input, so a single cell integrates evidence from a large part of the image. The classifier then flattens the 7×7×512 map after the last pool (it does not use global average pooling) and feeds it to the FC layers.
 
-**From edges to semantic shapes.** Each convolution combines the previous layer's outputs, so the effective receptive field grows with depth: edges and colour contrasts in block 1 combine into textures and corners in block 2, into parts such as fur patterns and eye or ear outlines in blocks 3–4, and into compact, sparse codes for part configurations in block 5. Max-pooling halves the resolution four times on the way, which trades exact position for tolerance to small shifts: a feature fires if it is present anywhere in its region. This hierarchy is not designed in; it emerges because separating 37 visually similar breeds under a cross-entropy loss requires increasingly abstract, breed-diagnostic features. The block 5 maps themselves cannot tell us which parts individual channels encode. That would need a dedicated probe such as activation maximization.
+**From edges to semantic shapes:** Each convolution combines the previous layer's outputs, so the effective receptive field grows with depth: edges and colour contrasts in block 1 combine into textures and corners in block 2, into parts such as fur patterns and eye or ear outlines in blocks 3–4, and into compact, sparse codes for part configurations in block 5. Max-pooling halves the resolution four times on the way, which trades exact position for tolerance to small shifts: a feature fires if it is present anywhere in its region. This hierarchy is not designed in; it emerges because separating 37 visually similar breeds under a cross-entropy loss requires increasingly abstract, breed-diagnostic features. The block 5 maps themselves cannot tell us which parts individual channels encode. That would need a dedicated probe such as activation maximization.
 
 ---
 
 ## 5. Object Detection: Confidence & IoU
 
-**Setup.** Fifteen images were drawn at random from the annotated set (unseeded `random.sample`, so not restricted to the validation split). For each, the localizer predicts a head box and the breed classifier gives a softmax distribution on the same image. **IoU** compares the predicted box to the ground-truth head box (scaled to 224×224). **Confidence** is the classifier's top-1 softmax probability. The localizer and the classifier are separate networks.
+**Setup:** Fifteen images were drawn at random from the annotated set (unseeded `random.sample`, so not restricted to the validation split). For each, the localizer predicts a head box and the breed classifier gives a softmax distribution on the same image. **IoU** compares the predicted box to the ground-truth head box (scaled to 224×224). **Confidence** is the classifier's top-1 softmax probability. The localizer and the classifier are separate networks.
 
 | Sample | IoU | Confidence | IoU ≥ 0.5 |
 |---|---|---|---|
@@ -138,11 +138,11 @@ In all three runs the model is in training mode, so the BatchNorm layers of a "f
 
 The W&B image captions use a stricter label (FAIL if IoU < 0.3, HIGH-CONF FAIL if confidence is also above 0.5), so under that rule only sample 6 is flagged and sample 5 reads "OK".
 
-**Where the localizer works.** On clean, well-lit pets, boxes are tight: samples 1, 10 and 14 reach IoU 0.89, 0.86 and 0.95.
+**Where the localizer works:** On clean, well-lit pets, boxes are tight: samples 1, 10 and 14 reach IoU 0.89, 0.86 and 0.95.
 
-**Confidence says nothing about box quality.** Across the 15 samples, the correlation between IoU and confidence is essentially zero (Pearson r ≈ 0.05, Spearman ≈ 0.05). The two worst boxes have confidence 0.94 and 0.76, close to the average of the good ones (0.88), and the best box (IoU 0.948) has the lowest confidence of all (0.678). This is expected from the design. The confidence comes from the breed classifier, which judges fur colour, face shape and body shape over the whole image; the box comes from a different network that regresses four numbers. A classifier can be very sure of the breed while the box is wrong.
+**Confidence says nothing about box quality:** Across the 15 samples, the correlation between IoU and confidence is essentially zero (Pearson r ≈ 0.05, Spearman ≈ 0.05). The two worst boxes have confidence 0.94 and 0.76, close to the average of the good ones (0.88), and the best box (IoU 0.948) has the lowest confidence of all (0.678). This is expected from the design. The confidence comes from the breed classifier, which judges fur colour, face shape and body shape over the whole image; the box comes from a different network that regresses four numbers. A classifier can be very sure of the breed while the box is wrong.
 
-**Failure cases.** In both samples below 0.5 the predicted box is much larger than the ground-truth head box and covers part of the body.
+**Failure cases:** In both samples below 0.5 the predicted box is much larger than the ground-truth head box and covers part of the body.
 
 - **Sample 5** (IoU 0.362, confidence 0.937): a white kitten resting on a bed in front of a plaid blanket. The ground-truth box is tight on the face. The prediction extends above the head onto the blanket and down over the chest.
 - **Sample 6** (IoU 0.252, confidence 0.755): a large white dog standing in front of a wooden fence in snow. The prediction covers the head and extends down over the chest, while the ground truth is the head alone.
@@ -153,9 +153,9 @@ Plausible contributors, none of which was tested here: the ground truth is a *he
 
 ## 6. Segmentation Evaluation: Dice v/s Pixel Accuracy
 
-**Setup.** The full fine-tuning run from the transfer-learning experiment (plain cross-entropy, 3 classes, 20 epochs). Pixel accuracy and macro Dice are computed per image on the validation set and averaged. Predicted and ground-truth masks for the first five validation images are logged at epochs 1, 5, 10, 15 and 20.
+**Setup:** The full fine-tuning run from the transfer-learning experiment (plain cross-entropy, 3 classes, 20 epochs). Pixel accuracy and macro Dice are computed per image on the validation set and averaged. Predicted and ground-truth masks for the first five validation images are logged at epochs 1, 5, 10, 15 and 20.
 
-**Observation.**
+**Observation:**
 
 | Epoch | Pixel accuracy | Macro Dice |
 |---|---|---|
@@ -164,22 +164,22 @@ Plausible contributors, none of which was tested here: the ground truth is a *he
 
 Pixel accuracy is higher than Dice throughout, and the gap is widest early (≈ 0.18 at epoch 1, ≈ 0.07 at epoch 20).
 
-**Why, mathematically.** Pixel accuracy is Σ<sub>c</sub> TP<sub>c</sub> / N, so every pixel counts equally and classes contribute in proportion to their size. The Dice for class c is 2·TP<sub>c</sub> / (2·TP<sub>c</sub> + FP<sub>c</sub> + FN<sub>c</sub>), and macro Dice averages the three classes with equal weight whatever their size. The trimaps are imbalanced: the background is the largest class, the pet most of the rest, and the border is a thin ring around the animal (roughly 55%, 38% and 7% of pixels as typical orders of magnitude). Two consequences follow.
+**Why, mathematically:** Pixel accuracy is Σ<sub>c</sub> TP<sub>c</sub> / N, so every pixel counts equally and classes contribute in proportion to their size. The Dice for class c is 2·TP<sub>c</sub> / (2·TP<sub>c</sub> + FP<sub>c</sub> + FN<sub>c</sub>), and macro Dice averages the three classes with equal weight whatever their size. The trimaps are imbalanced: the background is the largest class, the pet most of the rest, and the border is a thin ring around the animal (roughly 55%, 38% and 7% of pixels as typical orders of magnitude). Two consequences follow.
 
 - A model that gets background and pet perfectly right but misses every border pixel scores ≈ 93% pixel accuracy, yet its macro Dice is at most 2/3, because the border Dice is 0.
 - A model that predicts "background" everywhere scores a pixel accuracy equal to the background share (≈ 0.55), while its macro Dice is ≈ 0.24: the background Dice is ≈ 0.71 and the other two classes score 0.
 
-**Early epochs.** In the first epoch the network already gets the large, easy regions right, so pixel accuracy starts high at ≈ 0.76 while macro Dice is ≈ 0.58. The remaining error sits in small or hard regions, such as the border ring and the pet's boundary. Per-class Dice was not logged in this run, so that attribution follows from the metric definitions, not from a per-class breakdown.
+**Early epochs:** In the first epoch the network already gets the large, easy regions right, so pixel accuracy starts high at ≈ 0.76 while macro Dice is ≈ 0.58. The remaining error sits in small or hard regions, such as the border ring and the pet's boundary. Per-class Dice was not logged in this run, so that attribution follows from the metric definitions, not from a per-class breakdown.
 
-**Why Dice is the better metric here.** Per-class normalization means a failure on a small class cannot hide behind a large class, which is precisely the case for a thin border band. Dice also penalizes both missed pixels and spurious pixels relative to the class size. It has its own weakness: for classes that are tiny or absent, it is noisy, and the ε smoothing returns 1 when a class is absent from both prediction and ground truth. Reporting both metrics, as done here, is more informative than either alone.
+**Why Dice is the better metric here:** Per-class normalization means a failure on a small class cannot hide behind a large class, which is precisely the case for a thin border band. Dice also penalizes both missed pixels and spurious pixels relative to the class size. It has its own weakness: for classes that are tiny or absent, it is noisy, and the ε smoothing returns 1 when a class is absent from both prediction and ground truth. Reporting both metrics, as done here, is more informative than either alone.
 
-**Sample predictions.** On most of the five samples the predicted mask follows the ground-truth silhouette closely and the border band sits in the right place. The weakest is a brown dog on a patterned rug: the predicted pet region is fragmented and the border band is thicker and less precise than the ground truth, which fits the low colour contrast between the dog and the rug.
+**Sample predictions:** On most of the five samples the predicted mask follows the ground-truth silhouette closely and the border band sits in the right place. The weakest is a brown dog on a patterned rug: the predicted pet region is fragmented and the border band is thicker and less precise than the ground truth, which fits the low colour contrast between the dog and the rug.
 
 ---
 
 ## 7. The Final Pipeline Showcase
 
-**Setup.** Three images that are not in the dataset were run through the unified architecture (`MultiTaskPerceptionModel`) loaded from the three single-task checkpoints; the jointly fine-tuned weights were not used. One image came from the internet and two were photographed on the IITM campus. Each is resized to 224×224. The classifier receives the full resized image, so the box is not used to crop the input, and a bad box does not affect the breed prediction.
+**Setup:** Three images that are not in the dataset were run through the unified architecture (`MultiTaskPerceptionModel`) loaded from the three single-task checkpoints; the jointly fine-tuned weights were not used. One image came from the internet and two were photographed on the IITM campus. Each is resized to 224×224. The classifier receives the full resized image, so the box is not used to crop the input, and a bad box does not affect the breed prediction.
 
 | Image | Breed prediction (top-1) | Box | Segmentation |
 |---|---|---|---|
@@ -187,25 +187,25 @@ Pixel accuracy is higher than Dice throughout, and the gap is widest early (≈ 
 | Cat 1 (IITM, low-light indoor) | English Cocker Spaniel, 0.15 (then Wheaten Terrier 0.09, English Setter 0.09) | Moderate: covers the torso, larger than the head | Partial: noisy mask, thick and irregular border |
 | Cat 2 (IITM, outdoor, white cat) | English Setter, 0.38 | Missed: box sits in the upper left near a tree trunk, the cat is lower centre | Good: clean silhouette and border |
 
-**Classification.** Wrong on all three. The internet dog looks like a golden-coated retriever, a breed that is not among the 37 classes, so no breed prediction could be right; the low top-1 probability, with the remaining mass spread across unrelated breeds, is the appropriate response. Both cats were labelled as dog breeds, which is a species-level error. This is consistent with the overall picture of the classifier: a validation macro-F1 of 0.46 against 0.98 on the training set means it has learned the training distribution much better than it has learned breed features that transfer. Dark indoor light and an outdoor scene with a white cat both fall well outside that distribution.
+**Classification:** Wrong on all three. The internet dog looks like a golden-coated retriever, a breed that is not among the 37 classes, so no breed prediction could be right; the low top-1 probability, with the remaining mass spread across unrelated breeds, is the appropriate response. Both cats were labelled as dog breeds, which is a species-level error. This is consistent with the overall picture of the classifier: a validation macro-F1 of 0.46 against 0.98 on the training set means it has learned the training distribution much better than it has learned breed features that transfer. Dark indoor light and an outdoor scene with a white cat both fall well outside that distribution.
 
-**Localization.** Of the three outputs, the box is the most sensitive to context. It is right on a clean photo, oversized for a lying cat in low light, and misses entirely in a cluttered outdoor scene (soil, roots, a wall and branches). The regression head predicts four numbers from a flattened feature map, so competing salient regions can pull the prediction away from the subject.
+**Localization:** Of the three outputs, the box is the most sensitive to context. It is right on a clean photo, oversized for a lying cat in low light, and misses entirely in a cluttered outdoor scene (soil, roots, a wall and branches). The regression head predicts four numbers from a flattened feature map, so competing salient regions can pull the prediction away from the subject.
 
-**Segmentation.** Segmentation is the most robust output. It succeeded in two of three images, including the one where the box failed, and degraded only in the low-contrast indoor shot (tabby fur against a similarly toned floor). The U-Net decodes from skip connections at five scales and predicts at every pixel, so it relies on local boundaries and texture, which survive a change of background far better than a global breed signature or a four-number box regression.
+**Segmentation:** Segmentation is the most robust output. It succeeded in two of three images, including the one where the box failed, and degraded only in the low-contrast indoor shot (tabby fur against a similarly toned floor). The U-Net decodes from skip connections at five scales and predicts at every pixel, so it relies on local boundaries and texture, which survive a change of background far better than a global breed signature or a four-number box regression.
 
-**Summary.** Segmentation generalizes best, localization is sensitive to clutter, and classification is the least transferable of the three. A mask-derived box would be a natural fallback when the regressed box is unreliable.
+**Summary:** Segmentation generalizes best, localization is sensitive to clutter, and classification is the least transferable of the three. A mask-derived box would be a natural fallback when the regressed box is unreliable.
 
 ---
 
 ## 8. Meta-Analysis and Reflection
 
-**Setup.** `MultiTaskPerceptionModel` holds three task-specific VGG11 encoders and three heads. Each encoder starts from its own single-task checkpoint (`classifier.pth`, `localizer.pth`, `segmenter.pth`), and the full model is fine-tuned for 20 epochs with a weighted sum of the three losses:
+**Setup:** `MultiTaskPerceptionModel` holds three task-specific VGG11 encoders and three heads. Each encoder starts from its own single-task checkpoint (`classifier.pth`, `localizer.pth`, `segmenter.pth`), and the full model is fine-tuned for 20 epochs with a weighted sum of the three losses:
 
 `L = 1.0 · CE(breed) + 5.0 · (1 − IoU)(box) + 2.0 · CE(trimap)`
 
 Adam LR 1e-4 with weight decay 1e-4, StepLR ×0.1 every 10 epochs (so 1e-4 → 1e-5 at epoch 10), batch size 8, gradient clipping at 1.0, dropout 0.5 / 0.3 / 0.3 in the classification head, localization head and decoder. At the start of training, after weighting, the three terms are roughly 2.4 (classification), 3.0 (localization) and 0.3–0.7 (segmentation).
 
-**Loss curves.**
+**Loss curves:**
 
 | | Train | Validation |
 |---|---|---|
@@ -216,7 +216,7 @@ Adam LR 1e-4 with weight decay 1e-4, StepLR ×0.1 every 10 epochs (so 1e-4 → 1
 
 The learning-rate step at epoch 10 is visible everywhere: the training loss falls sharply between epochs 10 and 12 (≈ 3.5 → ≈ 2.7), validation loss drops from ≈ 6.0 to ≈ 4.7, and train F1 jumps from ≈ 0.76 to ≈ 0.95 within one epoch. After that, validation loss drifts upward, driven by the classification term.
 
-**Validation metrics at epoch 20.**
+**Validation metrics at epoch 20:**
 
 | Task | Metric | Train | Validation |
 |---|---|---|---|
