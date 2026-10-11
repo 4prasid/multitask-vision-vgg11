@@ -51,16 +51,16 @@ The unified model holds three task-specific encoders rather than one shared back
 ```
 multitask-vision-vgg11/
 ├── data/
-│   └── pets_dataset.py              # Oxford-IIIT Pet loader -> (image, label, bbox, mask)
+│   └── pets_dataset.py                  # Oxford-IIIT Pet loader -> (image, label, bbox, mask)
 ├── losses/
-│   └── iou_loss.py                  # Custom IoU loss (nn.Module)
+│   └── iou_loss.py                      # Custom IoU loss (nn.Module)
 ├── models/
-│   ├── vgg11.py                     # VGG11 encoder (BatchNorm, skip-feature output)
-│   ├── layers.py                    # CustomDropout (inverted dropout, nn.Module)
-│   ├── classification.py            # VGG11Classifier
-│   ├── localization.py              # VGG11Localizer
-│   ├── segmentation.py              # VGG11UNet
-│   └── multitask.py                 # MultiTaskPerceptionModel (unified)
+│   ├── vgg11.py                         # VGG11 encoder (BatchNorm, skip-feature output)
+│   ├── layers.py                        # CustomDropout (inverted dropout, nn.Module)
+│   ├── classification.py                # VGG11Classifier
+│   ├── localization.py                  # VGG11Localizer
+│   ├── segmentation.py                  # VGG11UNet
+│   └── multitask.py                     # MultiTaskPerceptionModel (unified)
 ├── Experiments/
 │   ├── multitasking_8.py                # joint multi-task training
 │   ├── inference_7.py                   # Run the pipeline on your own images
@@ -68,11 +68,11 @@ multitask-vision-vgg11/
 │   ├── dropout_2.py                     # dropout sweep
 │   ├── transfer_learning_3_4_6.py       # transfer learning, feature maps, Dice vs pixel accuracy
 │   └── object_detection_5.py            # detection IoU gallery
-├── class_train.py                   # Stage 1: classification
-├── loc_train.py                     # Stage 2: localization
-├── seg_train.py                     # Stage 3: segmentation (CE + Dice)
+├── class_train.py                       # Stage 1: classification
+├── loc_train.py                         # Stage 2: localization
+├── seg_train.py                         # Stage 3: segmentation (CE + Dice)
+├── Findings.md                          # Full written analysis of the experiments
 ├── requirements.txt
-├── FINDINGS.md                      # Full written analysis of the experiments
 └── LICENSE
 ```
 
